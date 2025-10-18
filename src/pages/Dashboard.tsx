@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Filter, Plus, View } from "lucide-react";
+import { Download, Eye, Filter, Plus, View } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,22 +14,46 @@ import Header from "../components/Header";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
 
-import type { TRLItem } from '../types/trl';
+import type { CaseInfo, Appointment } from "../types/case";
 
-import mockTRL from "../mockData/mockTRL";
-import mockAppointments from "../mockData/mockAppointments";
+import { BACKEND_HOST } from "@/constant/constants";
+const CASES_API_URL = "/trl/cases";
+const APPOINTMENTS_API_URL = "/trl/assessment_trl";
 
-function mergeProjectsWithAppointments(projects: TRLItem[]) {
-  return projects.map((project) => ({
-    ...project,
-    appointments: mockAppointments.filter(a => a.research_id === project.research_id)
+// Merge CaseInfo กับ Appointment
+function mergeCasesWithAppointments(cases: CaseInfo[], appointments: Appointment[]) {
+  return cases.map(c => ({
+    ...c,
+    appointments: appointments.filter(a => a.case_id === c.case_id)
   }));
 }
 
 export default function ResearcherDashboard() {
   const navigate = useNavigate();
 
-  const myResearch: TRLItem[] = mergeProjectsWithAppointments(mockTRL) as TRLItem[];
+  // --- State สำหรับข้อมูลจาก API ---
+  const [cases, setCases] = React.useState<(CaseInfo & { appointments: Appointment[] })[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  // --- ดึงข้อมูลจาก API ---
+  React.useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetch(`${BACKEND_HOST}/trl/cases`, {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+            }).then(res => res.json()),
+      fetch(`${BACKEND_HOST}/trl/appointments`, {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+            }).then(res => res.json()),
+    ])
+      .then(([casesData, appointmentsData]) => {
+        setCases(mergeCasesWithAppointments(casesData, appointmentsData));
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
 
   const [customFilters, setCustomFilters] = React.useState<{ column: string; value: string }[]>([]);
   const [showFilterModal, setShowFilterModal] = React.useState(false);
@@ -50,29 +74,22 @@ export default function ResearcherDashboard() {
     isUrgent: ["true", "false"],
   };
 
-  const filteredResearch = myResearch.filter((research) =>
+  const filteredCases = cases.filter(c =>
     customFilters.every(({ column, value }) => {
-      if (column === "type") {
-        return research.researchType === value;
+      switch (column) {
+        case "case_type": return c.case_type === value;
+        case "trl_score": return c.trl_score === value;
+        case "status": return (c.status ? "Approve" : "In process") === value;
+        case "is_urgent": return String(c.is_urgent) === value;
+        default: return true;
       }
-      if (column === "trlScore") {
-        return research.trlRecommendation?.trlScore.toString() === value;
-      }
-      if (column === "status") {
-        const statusString = research.trlRecommendation?.status === true ? "Approve" : "In process";
-        return statusString === value;
-      }
-      if (column === "isUrgent") {
-        return String(research.isUrgent) === value;
-      }
-      return true;
     })
   );
 
   const [rowsPerPage, setRowsPerPage] = React.useState(5);
   const [currentPage, setCurrentPage] = React.useState(1);
 
-  const totalPages = Math.ceil(filteredResearch.length / rowsPerPage);
+  const totalPages = Math.ceil(filteredCases.length / rowsPerPage);
   
 
   const getStatusColor = (status: string) => {
@@ -92,23 +109,23 @@ export default function ResearcherDashboard() {
   });
 
   // --- Sorting function ---
-  function sortResearch(researchList: TRLItem[]) {
+  function sortResearch(researchList: CaseInfo[]) {
     const sorted = [...researchList].sort((a, b) => {
       const { key, direction } = sortConfig;
-      let aValue: any = a[key as keyof TRLItem];
-      let bValue: any = b[key as keyof TRLItem];
+      let aValue: any = a[key as keyof CaseInfo];
+      let bValue: any = b[key as keyof CaseInfo];
 
       if (key === "trlScore") {
-        aValue = a.trlRecommendation?.trlScore ?? "";
-        bValue = b.trlRecommendation?.trlScore ?? "";
+        aValue = a.trl_score ?? "";
+        bValue = b.trl_score ?? "";
       }
       if (key === "status") {
-        aValue = a.trlRecommendation?.status ?? "";
-        bValue = b.trlRecommendation?.status ?? "";
+        aValue = a.status ?? "";
+        bValue = b.status ?? "";
       }
       if (key === "createdAt") {
-        aValue = new Date(a.createdAt).getTime();
-        bValue = new Date(b.createdAt).getTime();
+        aValue = new Date(a.created_at).getTime();
+        bValue = new Date(b.created_at).getTime();
       }
       if (aValue < bValue) return direction === "asc" ? -1 : 1;
       if (aValue > bValue) return direction === "asc" ? 1 : -1;
@@ -117,23 +134,21 @@ export default function ResearcherDashboard() {
 
     // ให้ urgent ขึ้นก่อน
     return sorted.sort((a, b) => {
-      if (a.isUrgent === b.isUrgent) return 0;
-      return a.isUrgent ? -1 : 1;
+      if (a.is_urgent === b.is_urgent) return 0;
+      return a.is_urgent ? -1 : 1;
     });
   }
   // --- Apply sort before filter ---
-  const sortedProjects = sortResearch(filteredResearch);
+  const sortedProjects = sortResearch(filteredCases);
   const paginatedResearch = sortedProjects.slice(
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage
   );
 
 
-  const handleViewResearch = (researchId: number) => {
-    const research = myResearch.find((r) => r.id === researchId);
-    if (research) {
-      navigate("/researcher-detail", { state: { research } });
-    }
+  const handleViewCase = (caseId: string) => {
+    const c = cases.find(c => c.case_id === caseId);
+    navigate(`/case-detail/${caseId}`, { state: { caseInfo: c } });
   };
 
   const handleDownloadResult = (filename: string) => {
@@ -143,9 +158,15 @@ export default function ResearcherDashboard() {
     link.click();
   };
 
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [customFilters, rowsPerPage]);
+
+  // --- Loading state ---
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <span>Loading...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -276,97 +297,98 @@ export default function ResearcherDashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedResearch.length === 0 ? (
+                {filteredCases.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center text-muted-foreground">
                       No research data found.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedResearch.map((research, index) => (
-                    <TableRow key={research.id}>
-                      <TableCell>{research.id}</TableCell>
+                  filteredCases.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage).map(c => (
+                    <TableRow key={c.case_id}>
+                      <TableCell>{c.case_id}</TableCell>
                       <TableCell>
                         <div className="flex flex-col">
                           <span
-                            className={`relative group ${research.isUrgent ? "text-red-600 font-semibold" : ""}`}
+                            className={`relative group ${c.is_urgent ? "text-red-600 font-semibold" : ""}`}
                           >
-                            {research.researchTitle}
-                            {research.isUrgent && (
+                            {c.case_title}
+                            {c.is_urgent && (
                               <span className="absolute left-1/2 -translate-x-1/2 ml-10 mt-2 hidden group-hover:block 
                                               border border-red-600 bg-white text-black text-xs font-normal
                                               px-4 py-2 rounded-lg shadow-lg z-10 w-64 text-center">
-                                {research.urgentReason}
+                                {c.urgent_reason}
                               </span>
                             )}
                           </span>
 
-                          {!research.trlRecommendation.status && research.urgentFeedback && (
+                          {!c.status && c.urgent_feedback && (
                             <span className="text-xs text-gray-500 mt-1">
-                              {research.urgentFeedback}
+                              {c.urgent_feedback}
                             </span>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{research.researchType}</TableCell>
+                      <TableCell>{c.case_type}</TableCell>
                       <TableCell>
-                        {research.trlRecommendation.status === true ? (
-                          <Badge variant="outline">TRL {research.trlRecommendation.trlScore}</Badge>
+                        {c.status === true ? (
+                          <Badge variant="outline">{c.trl_score}</Badge>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge className={`min-w-[20px] text-center whitespace-nowrap ${getStatusColor(research.trlRecommendation.status === true ? "Approve" : "In process")}`}>
-                          {research.trlRecommendation.status === true ? "Approve" : "In process"}
+                        <Badge className={`min-w-[20px] text-center whitespace-nowrap ${getStatusColor(c.status === true ? "Approve" : "In process")}`}>
+                          {c.status === true ? "Approve" : "In process"}
                         </Badge>
                       </TableCell>
 
                       <TableCell>
                         <div className="flex gap-2 min-w-[160px]">
-                          {research.trlRecommendation.result ? (
+                          {c.trl_score ? (
                             <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleViewCase(c.case_id)}
+                              >
+                                <Eye className="w-4 h-4 mr-2" />
+                                View
+                              </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
                                   handleDownloadResult(
-                                    research.trlRecommendation.result
-                                      ? `result_${research.researchTitle}.pdf`
-                                      : `result_${research.researchTitle}.txt`
+                                    c.case_title
+                                    // c.trl_result
+                                      ? `result_${c.case_title}.pdf`
+                                      : `result_${c.case_title}.txt`
                                   )
                                 }
                               >
                                 <Download className="w-4 h-4 mr-2" />
                                 Result
                               </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleViewResearch(research.id)}
-                              >
-                                <View className="w-4 h-4 mr-2" />
-                                View
-                              </Button>
                             </>
                           ) : (
                             <div className="flex flex-col items-start gap-1 min-w-[200px]">
-                                <div className="ml-auto">
+                                <div>
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => handleViewResearch(research.id)}
+                                    onClick={() => handleViewCase(c.case_id)}
                                   >
-                                    <View className="w-4 h-4 mr-2" />
+                                    <Eye className="w-4 h-4 mr-2" />
                                     View
                                   </Button>
                               </div>
-                                {research.appointments && research.appointments.length > 0 ? (
+                                {c.appointments && c.appointments.length > 0 ? (
                                 <Badge variant="outline" className="text-xs">
                                   Appointment:{" "}
                                   {format(
                                     new Date(
-                                      research.appointments[research.appointments.length - 1].date
+                                      c.appointments[c.appointments.length - 1].date
                                     ),
                                     "dd/MM/yyyy HH:mm",
                                     { locale: th }
@@ -381,9 +403,7 @@ export default function ResearcherDashboard() {
                           )}
                         </div>
                       </TableCell>
-
-
-                      <TableCell>{research.trlRecommendation.suggestion || "-"}</TableCell>
+                      <TableCell>{c.trl_suggestion || "-"}</TableCell>
                     </TableRow>
                   ))
                 )}

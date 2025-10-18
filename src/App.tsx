@@ -13,6 +13,7 @@ import AdminHomePage from "./pages/AdminHomePage";
 import AppointmentDetail from "./pages/AppointmentDetail";
 import Dashboard from "./pages/Dashboard";
 import ResearcherDetail from "./pages/ResearcherDetailAdmin";
+import CaseDetial from "./pages/caseDetial";
 import ResearcherForm from "./pages/researchDetails/ResearcherForm";
 import TrlScore from "./pages/TrlScore";
 import Step1 from "./pages/steps/Step1";
@@ -48,6 +49,7 @@ const App: React.FC = () => {
           <Route path="/admin-homepage" element={<AdminHomePage />} />
           <Route path="/researcher-homepage" element={<ResearcherHomePage />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/case-detail/:id" element={<CaseDetial />} />
           {/* <Route path="/appointment-detail" element={<AppointmentDetail />} /> */}
           <Route path="/researcher-detail" element={<ResearcherDetail />} />
           <Route path="/researcher-detail-researcher" element={<ResearcherDetailResearcher />} />
